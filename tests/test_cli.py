@@ -107,3 +107,35 @@ def test_download_writes_prefixed_lines(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "Wrote 2 lines" in result.stdout
     assert out.read_text() == "".join(f"{x}\n" for x in log)
+
+
+# Neither test passes --timeout: they exercise the default, and on a build
+# without one the child process hangs until run_cli's limit fails the test.
+SUMMARY_TEST_LIMIT = 30
+
+
+def test_summary_from_silent_device_times_out(tmp_path):
+    out = tmp_path / "summary.json"
+    with FakeDevice() as dev:
+        result = run_cli(
+            ["summary", "--port", dev.port, "--out", str(out)], SUMMARY_TEST_LIMIT
+        )
+    assert result.returncode != 0
+    assert "CRC" in result.stderr
+    assert not out.exists()
+
+
+def test_summary_without_crc_line_times_out(tmp_path):
+    def respond(cmd):
+        # A summary cut short before its closing CRC line.
+        return lines(*SUMMARY_LINES[:4]) if cmd == "summary" else None
+
+    out = tmp_path / "summary.json"
+    with FakeDevice(respond) as dev:
+        result = run_cli(
+            ["summary", "--port", dev.port, "--out", str(out)], SUMMARY_TEST_LIMIT
+        )
+    assert result.returncode != 0
+    assert "CRC" in result.stderr
+    assert "4 lines" in result.stderr
+    assert not out.exists()
