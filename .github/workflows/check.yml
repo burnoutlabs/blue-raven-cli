@@ -1,0 +1,35 @@
+# Runs `just check` and `just test`, so CI and local share one gate definition.
+
+name: Check
+
+# Pull requests only: every change to main arrives through a PR, so a run on
+# push to main would re-prove the PR run on the same tree.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Oldest supported (requires-python) and current.
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup
+        run: just setup
+
+      - name: Check (fmt + lint)
+        run: just check
+
+      - name: Test
+        run: just test

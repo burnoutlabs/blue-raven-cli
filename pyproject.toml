@@ -22,3 +22,18 @@ braven = "braven.cli:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["braven*"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.11",
+]
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

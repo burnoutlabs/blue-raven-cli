@@ -1,0 +1,141 @@
+"""The `braven` commands end to end, against a fake device on a pty."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from conftest import SUMMARY_LINES, needs_pty, run_cli
+from fake_device import FakeDevice, lines
+
+pytestmark = needs_pty
+
+SIM_ARGS = [
+    "0080",
+    "010",
+    "0000",
+    "000",
+    "07100",
+    "0000",
+    "000",
+    "00002",
+    "0",
+    "1",
+    "0",
+    "1",
+]
+
+
+def test_summary_writes_parsed_json(tmp_path):
+    def respond(cmd):
+        return lines(*SUMMARY_LINES) if cmd == "summary" else None
+
+    out = tmp_path / "summary.json"
+    with FakeDevice(respond) as dev:
+        result = run_cli(["summary", "--port", dev.port, "--out", str(out)], 20)
+    assert result.returncode == 0, result.stderr
+    assert dev.commands == ["summary"]
+    parsed = json.loads(out.read_text())
+    assert parsed["Rocket"] == "Adrian's BRav"
+    assert parsed["pad_ASL"] == "6806"
+    assert "SUMMARY" not in json.dumps(parsed)  # header line is skipped
+
+
+def test_simulate_sends_fields_verbatim():
+    with FakeDevice() as dev:
+        result = run_cli(["simulate", "--port", dev.port, *SIM_ARGS], 20)
+    assert result.returncode == 0, result.stderr
+    # Fixed-width fields keep their leading zeros.
+    assert dev.commands == ["start sim " + " ".join(SIM_ARGS)]
+
+
+def test_simulate_rejects_out_of_range_drag_code():
+    with FakeDevice() as dev:
+        args = [*SIM_ARGS[:-1], "10"]
+        result = run_cli(["simulate", "--port", dev.port, *args], 20)
+    assert result.returncode == 2
+    assert dev.commands == []
+
+
+def test_configure_takes_profile_as_positional_argument():
+    with FakeDevice() as dev:
+        result = run_cli(["configure", "--port", dev.port, "2nd stage"], 20)
+    assert result.returncode == 0, result.stderr
+    assert dev.commands == ["2nd stage"]
+
+
+@pytest.mark.parametrize(
+    "command,prefix", [("download-low", "@ LOG_LOW"), ("download-high", "@ LOG_HIR")]
+)
+def test_download_from_silent_device_fails_without_leaving_a_file(
+    tmp_path, command, prefix
+):
+    out = tmp_path / "log.txt"
+    with FakeDevice() as dev:
+        result = run_cli(
+            [command, "--port", dev.port, "--out", str(out), "--initial", "0.5"], 20
+        )
+    assert result.returncode != 0
+    assert prefix in result.stderr
+    assert not out.exists()
+
+
+def test_empty_download_leaves_an_existing_file_untouched(tmp_path):
+    out = tmp_path / "log.txt"
+    out.write_text("earlier download\n")
+    with FakeDevice() as dev:
+        result = run_cli(
+            ["download-low", "--port", dev.port, "--out", str(out), "--initial", "0.5"],
+            20,
+        )
+    assert result.returncode != 0
+    assert out.read_text() == "earlier download\n"
+
+
+def test_download_writes_prefixed_lines(tmp_path):
+    log = ["@ LOG_HIR 80 sync 1 CRC: 0001", "@ LOG_HIR 80 sync 3 CRC: 0002"]
+
+    def respond(cmd):
+        return lines(*log) if cmd == "download h" else None
+
+    out = tmp_path / "high.txt"
+    with FakeDevice(respond) as dev:
+        result = run_cli(
+            ["download-high", "--port", dev.port, "--out", str(out), "--idle", "0.5"],
+            20,
+        )
+    assert result.returncode == 0, result.stderr
+    assert "Wrote 2 lines" in result.stdout
+    assert out.read_text() == "".join(f"{x}\n" for x in log)
+
+
+# Neither test passes --timeout: they exercise the default, and on a build
+# without one the child process hangs until run_cli's limit fails the test.
+SUMMARY_TEST_LIMIT = 30
+
+
+def test_summary_from_silent_device_times_out(tmp_path):
+    out = tmp_path / "summary.json"
+    with FakeDevice() as dev:
+        result = run_cli(
+            ["summary", "--port", dev.port, "--out", str(out)], SUMMARY_TEST_LIMIT
+        )
+    assert result.returncode != 0
+    assert "CRC" in result.stderr
+    assert not out.exists()
+
+
+def test_summary_without_crc_line_times_out(tmp_path):
+    def respond(cmd):
+        # A summary cut short before its closing CRC line.
+        return lines(*SUMMARY_LINES[:4]) if cmd == "summary" else None
+
+    out = tmp_path / "summary.json"
+    with FakeDevice(respond) as dev:
+        result = run_cli(
+            ["summary", "--port", dev.port, "--out", str(out)], SUMMARY_TEST_LIMIT
+        )
+    assert result.returncode != 0
+    assert "CRC" in result.stderr
+    assert "4 lines" in result.stderr
+    assert not out.exists()

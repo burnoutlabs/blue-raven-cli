@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 import typer
 
-from .serialio import list_serial_ports, open_port
-from .protocol import send_command, stream_download_prefixed
-from .parsers import parse_summary_block
 from .files import write_text
+from .parsers import parse_summary_block
+from .protocol import send_command, stream_download_prefixed
+from .serialio import list_serial_ports, open_port
 
 app = typer.Typer(
     add_completion=False, help="Operate the Featherweight Blue Raven over USB."
@@ -32,6 +32,17 @@ def _ensure_output_path(path_str: str) -> Path:
     p = Path(path_str).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _report_download(lines: int, bytes_: int, out: str, prefix: str) -> None:
+    if lines == 0:
+        typer.echo(
+            f"No '{prefix}' lines received; nothing written to {out}. "
+            "Check the connection and that a flight is stored, or raise --initial.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
 
 
 @app.command(help="List available serial ports.")
@@ -102,6 +113,11 @@ def status(
 def summary(
     port: str = typer.Option(..., help="Serial port to open."),
     out: str = typer.Option(..., help="Path to write the JSON summary output."),
+    timeout: float = typer.Option(
+        10.0,
+        min=0.1,
+        help="Seconds to wait for the summary's closing CRC line before giving up.",
+    ),
 ) -> None:
     try:
         ser = open_port(port, timeout=1.0)
@@ -113,8 +129,9 @@ def summary(
         send_command(ser, "summary")
         lines = []
         saw_crc = False
-        last_rx = time.time()
-        while True:
+        deadline = time.monotonic() + timeout
+        last_rx = time.monotonic()
+        while time.monotonic() < deadline:
             raw = ser.readline()
             if raw:
                 try:
@@ -122,15 +139,22 @@ def summary(
                 except Exception:
                     line = raw.decode("latin-1", errors="replace").strip()
                 lines.append(line)
-                last_rx = time.time()
+                last_rx = time.monotonic()
                 if "CRC" in line.upper():
                     saw_crc = True
             else:
-                if saw_crc and (time.time() - last_rx) > 1.0:
+                if saw_crc and (time.monotonic() - last_rx) > 1.0:
                     break
                 time.sleep(0.05)
             if len(lines) > 1000 and not saw_crc:
                 break
+        if not saw_crc:
+            typer.echo(
+                f"No summary CRC line received ({len(lines)} lines received, "
+                f"--timeout {timeout:g} s); nothing written to {out}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         parsed = parse_summary_block(lines[1:]) if len(lines) > 1 else {}
         p = _ensure_output_path(out)
         write_text(p, json.dumps(parsed, indent=2))
@@ -160,7 +184,7 @@ def download_low(
             initial_timeout=initial,
             idle_timeout=idle,
         )
-        typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
+        _report_download(lines, bytes_, out, "@ LOG_LOW")
     finally:
         ser.close()
 
@@ -186,7 +210,7 @@ def download_high(
             initial_timeout=initial,
             idle_timeout=idle,
         )
-        typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
+        _report_download(lines, bytes_, out, "@ LOG_HIR")
     finally:
         ser.close()
 
