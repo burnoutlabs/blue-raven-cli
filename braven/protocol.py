@@ -25,9 +25,11 @@ def stream_download_prefixed(
       - no bytes arrive for idle_timeout after first data, or
       - initial_timeout elapses before first data.
 
+    The output file is opened on the first matching line, so a download that
+    captures nothing neither creates out_path nor truncates an existing one.
+
     Returns (lines_written, bytes_written).
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         ser.reset_input_buffer()
     except Exception:
@@ -43,7 +45,8 @@ def stream_download_prefixed(
     first_rx = None
     last_rx = t0
 
-    with open(out_path, "wb") as f:
+    f = None
+    try:
         while True:
             n = ser.in_waiting
             chunk = ser.read(n if n else 4096)
@@ -69,6 +72,9 @@ def stream_download_prefixed(
                         line = line_bytes.decode("latin-1", errors="replace")
 
                     if line.startswith(expected_prefix):
+                        if f is None:
+                            out_path.parent.mkdir(parents=True, exist_ok=True)
+                            f = open(out_path, "wb")
                         f.write(line_bytes + b"\n")
                         wrote_lines += 1
                         wrote_bytes += len(line_bytes) + 1
@@ -87,5 +93,8 @@ def stream_download_prefixed(
                 if (now - last_rx) >= idle_timeout:
                     break
             time.sleep(0.005)
+    finally:
+        if f is not None:
+            f.close()
 
     return wrote_lines, wrote_bytes

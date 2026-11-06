@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from conftest import SUMMARY_LINES, needs_pty, run_cli
 from fake_device import FakeDevice, lines
 
@@ -61,3 +62,48 @@ def test_configure_takes_profile_as_positional_argument():
         result = run_cli(["configure", "--port", dev.port, "2nd stage"], 20)
     assert result.returncode == 0, result.stderr
     assert dev.commands == ["2nd stage"]
+
+
+@pytest.mark.parametrize(
+    "command,prefix", [("download-low", "@ LOG_LOW"), ("download-high", "@ LOG_HIR")]
+)
+def test_download_from_silent_device_fails_without_leaving_a_file(
+    tmp_path, command, prefix
+):
+    out = tmp_path / "log.txt"
+    with FakeDevice() as dev:
+        result = run_cli(
+            [command, "--port", dev.port, "--out", str(out), "--initial", "0.5"], 20
+        )
+    assert result.returncode != 0
+    assert prefix in result.stderr
+    assert not out.exists()
+
+
+def test_empty_download_leaves_an_existing_file_untouched(tmp_path):
+    out = tmp_path / "log.txt"
+    out.write_text("earlier download\n")
+    with FakeDevice() as dev:
+        result = run_cli(
+            ["download-low", "--port", dev.port, "--out", str(out), "--initial", "0.5"],
+            20,
+        )
+    assert result.returncode != 0
+    assert out.read_text() == "earlier download\n"
+
+
+def test_download_writes_prefixed_lines(tmp_path):
+    log = ["@ LOG_HIR 80 sync 1 CRC: 0001", "@ LOG_HIR 80 sync 3 CRC: 0002"]
+
+    def respond(cmd):
+        return lines(*log) if cmd == "download h" else None
+
+    out = tmp_path / "high.txt"
+    with FakeDevice(respond) as dev:
+        result = run_cli(
+            ["download-high", "--port", dev.port, "--out", str(out), "--idle", "0.5"],
+            20,
+        )
+    assert result.returncode == 0, result.stderr
+    assert "Wrote 2 lines" in result.stdout
+    assert out.read_text() == "".join(f"{x}\n" for x in log)

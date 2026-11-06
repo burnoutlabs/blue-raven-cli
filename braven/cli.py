@@ -34,6 +34,17 @@ def _ensure_output_path(path_str: str) -> Path:
     return p
 
 
+def _report_download(lines: int, bytes_: int, out: str, prefix: str) -> None:
+    if lines == 0:
+        typer.echo(
+            f"No '{prefix}' lines received; nothing written to {out}. "
+            "Check the connection and that a flight is stored, or raise --initial.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
+
+
 @app.command(help="List available serial ports.")
 def ports(
     json_out: bool = typer.Option(
@@ -160,7 +171,7 @@ def download_low(
             initial_timeout=initial,
             idle_timeout=idle,
         )
-        typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
+        _report_download(lines, bytes_, out, "@ LOG_LOW")
     finally:
         ser.close()
 
@@ -186,7 +197,7 @@ def download_high(
             initial_timeout=initial,
             idle_timeout=idle,
         )
-        typer.echo(f"Wrote {lines} lines ({bytes_} bytes) to {out}")
+        _report_download(lines, bytes_, out, "@ LOG_HIR")
     finally:
         ser.close()
 

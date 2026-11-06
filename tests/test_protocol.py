@@ -83,3 +83,4 @@ def test_download_gives_up_after_initial_timeout_on_silent_device(tmp_path):
         (n_lines, n_bytes), elapsed = _download(dev, out, initial=0.5, idle=10.0)
     assert (n_lines, n_bytes) == (0, 0)
     assert 0.5 <= elapsed < 3.0
+    assert not out.exists()
