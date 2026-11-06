@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 import typer
 
-from .serialio import list_serial_ports, open_port
-from .protocol import send_command, stream_download_prefixed
-from .parsers import parse_summary_block
 from .files import write_text
+from .parsers import parse_summary_block
+from .protocol import send_command, stream_download_prefixed
+from .serialio import list_serial_ports, open_port
 
 app = typer.Typer(
     add_completion=False, help="Operate the Featherweight Blue Raven over USB."
